@@ -79,3 +79,7 @@ export const guardian1 = privateKeyToAccount(
 export const guardian2 = privateKeyToAccount(
     '0x1a4c05be22dd9294615087ba1dba4266ae68cdc320d9164dbf3650ec0db60f67',
 ) // the key coresponding to the second guardian
+
+export const guardian3 = privateKeyToAccount(
+    '0xca908e5d56e3fd8eaa48e3c3a28ed8f5ecd47d57b67f2b0ffa1129c17d195522',
+) // the key coresponding to the second guardian
