@@ -39,8 +39,10 @@ import {
   encodeValidatorNonce,
   getAccount,
   getAddOwnableValidatorOwnerAction,
+  getAddSocialRecoveryGuardianAction,
   getOwnableValidator,
   getOwnableValidatorOwners,
+  getOwnableValidatorThreshold,
   getRemoveOwnableValidatorOwnerAction,
   getRemoveSocialRecoveryGuardianAction,
   getSetOwnableValidatorThresholdAction,
@@ -92,6 +94,9 @@ export default function Page() {
   const [ownersOwnableValidator, setOwnersOwnableValidator] = useState<
     string[]
   >([]);
+  const [thresholdOwnableValidator, setThresholdOwnableValidator] = useState<
+    string | number
+  >(0);
   const [isInstalledOwnableValidator, setIsInstalledOwnableValidator] =
     useState(false);
 
@@ -350,7 +355,7 @@ export default function Page() {
     setOwners(owners);
   };
 
-  // #region Ownable Validator 
+  // #region Ownable Validator
   const installOwnableValidatorModule = useCallback(async () => {
     try {
       if (!smartAccountClient) {
@@ -371,34 +376,37 @@ export default function Page() {
     }
   }, [smartAccountClient, socialRecovery]);
 
+  const removeOwnableValidator = useCallback(
+    async (owner: string) => {
+      try {
+        if (!smartAccountClient || !safeAccount) {
+          return;
+        }
+        const removeOwner = await getRemoveOwnableValidatorOwnerAction({
+          client: publicClient,
+          account: safeAccount as any,
+          owner: owner as Address,
+        });
 
-  const removeOwnableValidator = useCallback(async (owner: string) => {
-    try {
-      if (!smartAccountClient || !safeAccount) {
-        return;
+        const userOpHash = await smartAccountClient?.sendUserOperation({
+          calls: [
+            {
+              to: removeOwner.to,
+              data: removeOwner.data,
+              value: BigInt(0),
+            },
+          ],
+        });
+        const result = await pimlicoClient.waitForUserOperationReceipt({
+          hash: userOpHash,
+        });
+        console.log("🚀 ~ removeOwnableValidator ~ result:", result);
+      } catch (error) {
+        console.error(error);
       }
-      const removeOwner = await getRemoveOwnableValidatorOwnerAction({
-        client: publicClient,
-        account: safeAccount as any,
-        owner: owner as Address,
-      });
-
-      const userOpHash = await smartAccountClient?.sendUserOperation({
-        calls: [{
-          to: removeOwner.to,
-          data: removeOwner.data,
-          value: BigInt(0),
-        },],
-      });
-      const result = await pimlicoClient.waitForUserOperationReceipt({
-        hash: userOpHash,
-      });
-      console.log("🚀 ~ removeOwnableValidator ~ result:", result)
-
-    } catch (error) {
-      console.error(error);
-    }
-  }, [smartAccountClient, socialRecovery]);
+    },
+    [smartAccountClient, socialRecovery]
+  );
 
   const transferTokenByOwnableValidator = useCallback(async () => {
     try {
@@ -440,7 +448,7 @@ export default function Page() {
             }),
           },
         ],
-      })
+      });
       const userOpHashToSign = getUserOperationHash({
         chainId: sepolia.id,
         entryPointAddress: entryPoint07Address,
@@ -452,18 +460,120 @@ export default function Page() {
         message: { raw: userOpHashToSign },
       });
       userOperation.signature = signature1;
-      
-      const userOpHash = await smartAccountClient.sendUserOperation(userOperation);
+
+      const userOpHash = await smartAccountClient.sendUserOperation(
+        userOperation
+      );
       const receipt = await smartAccountClient.waitForUserOperationReceipt({
         hash: userOpHash,
       });
-      console.log("🚀 ~ transferTokenByOwnableValidator ~ receipt:", receipt)
+      console.log("🚀 ~ transferTokenByOwnableValidator ~ receipt:", receipt);
     } catch (error) {
       console.error(error);
     }
   }, [smartAccountClient, socialRecovery]);
 
-  const getOwnersValidator = useCallback(async () => {
+  const addGuardianByOwnableValidator = useCallback(async () => {
+    try {
+      if (!smartAccountClient || !safeAccount) {
+        return;
+      }
+      const nonce = await getAccountNonce(publicClient, {
+        address: safeAccount.address,
+        entryPointAddress: entryPoint07Address,
+        key: encodeValidatorNonce({
+          account: getAccount({
+            address: safeAccount.address,
+            type: "safe",
+          }),
+          validator: ownableValidatorModule,
+        }),
+      });
+
+      const addGuardian = getAddSocialRecoveryGuardianAction({
+        guardian: "0xE96dA2357f5A6fD3ECd7E3436ea10726394CB99d",
+      });
+
+      const userOperation = await smartAccountClient.prepareUserOperation({
+        account: safeAccount,
+        nonce,
+        calls: [addGuardian],
+      });
+      const userOpHashToSign = getUserOperationHash({
+        chainId: sepolia.id,
+        entryPointAddress: entryPoint07Address,
+        entryPointVersion: "0.7",
+        userOperation,
+      });
+
+      const signature1 = await validator.signMessage({
+        message: { raw: userOpHashToSign },
+      });
+      userOperation.signature = signature1;
+
+      const userOpHash = await smartAccountClient.sendUserOperation(
+        userOperation
+      );
+      const receipt = await smartAccountClient.waitForUserOperationReceipt({
+        hash: userOpHash,
+      });
+      console.log("🚀 ~ addGuardianByOwnableValidator ~ receipt:", receipt);
+    } catch (error) {
+      console.error(error);
+    }
+  }, [smartAccountClient, socialRecovery, ownableValidatorModule]);
+
+  const setThresholdForOwnableValidator = useCallback(async () => {
+    try {
+      if (!smartAccountClient || !safeAccount) {
+        return;
+      }
+      const nonce = await getAccountNonce(publicClient, {
+        address: safeAccount.address,
+        entryPointAddress: entryPoint07Address,
+        key: encodeValidatorNonce({
+          account: getAccount({
+            address: safeAccount.address,
+            type: "safe",
+          }),
+          validator: ownableValidatorModule,
+        }),
+      });
+
+      const setThresholdAction = getSetOwnableValidatorThresholdAction({
+        threshold: 2,
+      });
+
+      const userOperation = await smartAccountClient.prepareUserOperation({
+        account: safeAccount,
+        nonce,
+        calls: [setThresholdAction],
+      });
+      const userOpHashToSign = getUserOperationHash({
+        chainId: sepolia.id,
+        entryPointAddress: entryPoint07Address,
+        entryPointVersion: "0.7",
+        userOperation,
+      });
+
+      const signature1 = await validator.signMessage({
+        message: { raw: userOpHashToSign },
+      });
+      userOperation.signature = signature1;
+
+      const userOpHash = await smartAccountClient.sendUserOperation(
+        userOperation
+      );
+      const receipt = await smartAccountClient.waitForUserOperationReceipt({
+        hash: userOpHash,
+      });
+      console.log("🚀 ~ setThreshold ~ receipt:", receipt);
+    } catch (error) {
+      console.error(error);
+    }
+  }, [smartAccountClient, socialRecovery]);
+
+  const getOwnerAndThreshold = useCallback(async () => {
     try {
       if (!smartAccountClient) {
         return;
@@ -472,7 +582,13 @@ export default function Page() {
         account: safeAccount as any,
         client: publicClient,
       });
+
+      const threshold = await getOwnableValidatorThreshold({
+        account: safeAccount as any,
+        client: publicClient,
+      });
       setOwnersOwnableValidator(owners);
+      setThresholdOwnableValidator(threshold);
     } catch (error) {
       console.error(error);
     }
@@ -652,7 +768,12 @@ export default function Page() {
 
   return (
     <div>
-      <button onClick={connectWallets}>Connect Wallet</button>
+      <button
+        className="mr-2 px-4 py-2 bg-blue-500 text-white rounded"
+        onClick={connectWallets}
+      >
+        Connect Wallet
+      </button>
       {safeAddress && (
         <div
           style={{
@@ -721,11 +842,14 @@ export default function Page() {
         }}
       >
         <h3>
-          Module: <b>Ownable Validator</b>{" "} 
+          Module: <b>Ownable Validator</b>{" "}
           {isInstalledOwnableValidator ? "✅" : "❌"}
         </h3>
         <i>it can use as multisig</i>
         <p>{ownableValidatorModule.address}</p>
+        <p>
+          Threshold: <b>{thresholdOwnableValidator}</b>
+        </p>
         <ul>
           <b>Validator:</b>
           {ownersOwnableValidator.map((owner, index) => (
@@ -755,18 +879,30 @@ export default function Page() {
         >
           Install ownable validator
         </button>
-        
+
         <button
-          onClick={getOwnersValidator}
+          onClick={getOwnerAndThreshold}
           className="mr-2 px-4 py-2 bg-pink-500 text-white rounded"
         >
-          Get owners
+          Get owners + threshold
+        </button>
+        <button
+          onClick={setThresholdForOwnableValidator}
+          className="mr-2 px-4 py-2 bg-pink-500 text-white rounded"
+        >
+          Set threshold
         </button>
         <button
           onClick={transferTokenByOwnableValidator}
           className="mr-2 px-4 py-2 bg-pink-500 text-white rounded"
         >
-          Test transfer 
+          Test transfer
+        </button>
+        <button
+          onClick={addGuardianByOwnableValidator}
+          className="mr-2 px-4 py-2 bg-pink-500 text-white rounded"
+        >
+          Add some guardian
         </button>
       </div>
       <div
