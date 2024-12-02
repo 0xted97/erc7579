@@ -1,0 +1,32 @@
+diff --git a/node_modules/@rhinestone/automations-sdk/_esm/Automation.js b/node_modules/@rhinestone/automations-sdk/_esm/Automation.js
+index 09f16df..fc19f67 100644
+--- a/node_modules/@rhinestone/automations-sdk/_esm/Automation.js
++++ b/node_modules/@rhinestone/automations-sdk/_esm/Automation.js
+@@ -1,5 +1,5 @@
+-import { Fetcher } from './common/Fetcher';
+-import { EVENT_BASED_TRIGGER_URL, TIME_BASED_TRIGGER_URL } from './constants';
++import { Fetcher } from './common/Fetcher.js';
++import { EVENT_BASED_TRIGGER_URL, TIME_BASED_TRIGGER_URL } from './constants.js';
+ export class Automation {
+     constructor(params) {
+         const { apiKey, ...clientData } = params;
+diff --git a/node_modules/@rhinestone/automations-sdk/_esm/common/Fetcher.js b/node_modules/@rhinestone/automations-sdk/_esm/common/Fetcher.js
+index 0fa0104..e5ee877 100644
+--- a/node_modules/@rhinestone/automations-sdk/_esm/common/Fetcher.js
++++ b/node_modules/@rhinestone/automations-sdk/_esm/common/Fetcher.js
+@@ -1,4 +1,4 @@
+-import { AUTOMATIONS_BASE_URL } from '../constants';
++import { AUTOMATIONS_BASE_URL } from '../constants.js';
+ export class Fetcher {
+     constructor(apiKey) {
+         this.apiKey = apiKey;
+diff --git a/node_modules/@rhinestone/automations-sdk/_esm/index.js b/node_modules/@rhinestone/automations-sdk/_esm/index.js
+index e327156..8269ac3 100644
+--- a/node_modules/@rhinestone/automations-sdk/_esm/index.js
++++ b/node_modules/@rhinestone/automations-sdk/_esm/index.js
+@@ -1,4 +1,4 @@
+-import { Automation } from './Automation';
++import { Automation } from './Automation.js';
+ export function createAutomationClient(params) {
+     return new Automation(params);
+ }

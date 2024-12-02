@@ -6,24 +6,26 @@ import {
 import React, { useEffect, useState } from "react";
 import { Client, createWalletClient, custom, http, HttpTransport } from "viem";
 import { sepolia } from "viem/chains";
-import { useAccount } from "wagmi";
+import { createSmartAccountClient } from "permissionless";
+import { Erc7579Actions, erc7579Actions } from "permissionless/actions/erc7579";
+import { BundlerActions, entryPoint07Address } from "viem/account-abstraction";
+import { MOCK_ATTESTER_ADDRESS, RHINESTONE_ATTESTER_ADDRESS } from "@rhinestone/module-sdk";
+
 
 import { MODULES, ModuleType } from "@/utils/modules";
 import {
   BUNDLER_URL,
   ERC7579_LAUNCHPAD_ADDRESS,
   SAFE4337_MODULE_ADDRESS,
-  SAFE_ACCOUNT_STORAGE_KEY,
 } from "@/utils/constants";
-import { BundlerActions, entryPoint07Address } from "viem/account-abstraction";
 import MultiSig from "./modules/MultiSig";
-import { createSmartAccountClient } from "permissionless";
+import WebAuthn from "./modules/WebAuthn";
+import ScheduleTransfer from "./modules/ScheduleTransfer";
+
 import { pimlicoClient } from "@/utils/config";
-import { Erc7579Actions, erc7579Actions } from "permissionless/actions/erc7579";
 
 const SafePage: React.FC = () => {
-  const DEFAULT_SALE_NONCE = BigInt(7579_0);
-  const { address } = useAccount();
+  const DEFAULT_SALE_NONCE = BigInt(7579_3);
   const [walletClient, setWalletClient] = useState<ReturnType<
     typeof createWalletClient
   > | null>(null);
@@ -38,7 +40,7 @@ const SafePage: React.FC = () => {
   const [safeAddress, setSafeAddress] = useState<string | null>(null);
   const [safeIsDeployed, setSafeIsDeployed] = useState(false);
   const [selectedModule, setSelectedModule] = useState<ModuleType | null>(
-    ModuleType.Governance
+    ModuleType.Webauthn
   );
   const [prepareUserOperationData, setPrepareUserOperationData] = useState();
 
@@ -69,6 +71,12 @@ const SafePage: React.FC = () => {
         safe4337ModuleAddress: SAFE4337_MODULE_ADDRESS,
         erc7579LaunchpadAddress: ERC7579_LAUNCHPAD_ADDRESS,
         saltNonce: DEFAULT_SALE_NONCE,
+
+        attesters: [
+          RHINESTONE_ATTESTER_ADDRESS, // Rhinestone Attester
+          MOCK_ATTESTER_ADDRESS, // Mock Attester - do not use in production
+        ],
+        attestersThreshold: 1,
       });
       const isSafeDeployed = await safeAccount.isDeployed();
       setSafeIsDeployed(isSafeDeployed);
@@ -100,9 +108,19 @@ const SafePage: React.FC = () => {
   };
 
   const renderModule = () => {
-    if (selectedModule === ModuleType.MultiSig) {
+    if (selectedModule === ModuleType.Webauthn) {
       return (
-        <MultiSig
+        <WebAuthn
+          key={selectedModule}
+          isSafeDeployed={safeIsDeployed}
+          safeAccount={safeAccount!}
+          smartAccount={smartAccountClient!}
+        />
+      );
+    }
+    if(selectedModule === ModuleType.ScheduleTransfer) { 
+      return (
+        <ScheduleTransfer
           key={selectedModule}
           isSafeDeployed={safeIsDeployed}
           safeAccount={safeAccount!}
@@ -115,18 +133,17 @@ const SafePage: React.FC = () => {
 
   return (
     <div className="p-4">
-      <div className="bg-white shadow-md rounded-lg p-6 mb-6">
+      <div className="bg-white shadow-md rounded-lg p-6 mb-6 m-4">
         <ConnectButton />
         <h2 className="text-xl font-bold mb-4">Safe Address: {safeAddress}</h2>
       </div>
-      <div className="bg-white shadow-md rounded-lg p-6 mb-6">
+      <div className="bg-white shadow-md rounded-lg p-6 mb-6 m-4">
         <h2 className="text-xl font-bold mb-4">User Operation Data</h2>
         <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto">
           {JSON.stringify(prepareUserOperationData, null, 2)}
         </pre>
       </div>
-
-      <div className="bg-white shadow-md rounded-lg">
+      <div className="bg-white shadow-md rounded-lg mb-4 m-4">
         <div className="p-4">
           <MultiSig
             key={selectedModule}
@@ -135,6 +152,8 @@ const SafePage: React.FC = () => {
             smartAccount={smartAccountClient!}
           />
         </div>
+      </div>
+      <div className="bg-white shadow-md rounded-lg mb-4 m-4">
         <div className="border-b border-gray-200">
           <nav className="flex space-x-4 p-4">
             {MODULES.map((module, index) => (

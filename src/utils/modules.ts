@@ -1,25 +1,30 @@
 export enum ModuleType { 
     MultiSig = 'multi-sig',
-    Governance = 'governance',
+    ColStorage = 'cold-storage',
+    Webauthn = 'webauthn',
+    AutoSaving = 'auto-saving',
+    ScheduleTransfer = 'schedule-transfer',
 }
 export interface Module {
     id: ModuleType;
     name: string;
     description: string;
-    address: string;
 }
 
 export const MODULES: Module[] = [
-    // {
-    //     id: ModuleType.MultiSig,
-    //     name: 'Multi Sig',
-    //     description: 'This is a multi-signature wallet module',
-    //     address: '123 Main St'
-    // },
     {
-        id: ModuleType.Governance,
-        name: 'Module2',
-        description: 'This is the second module',
-        address: '456 Elm St'
+        id: ModuleType.Webauthn,
+        name: 'WebAuthn',
+        description: 'WebAuthn validator for user authentication',
+    },
+    {
+        id: ModuleType.ColStorage,
+        name: 'Cold Storage',
+        description: 'Timelock and transfer restrictions',
+    },
+    {
+        id: ModuleType.ScheduleTransfer,
+        name: 'Schedule Transfer',
+        description: 'Schedule transfer of assets',
     }
 ];
