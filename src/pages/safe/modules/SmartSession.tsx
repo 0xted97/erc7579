@@ -1,62 +1,55 @@
 import { pimlicoClient } from "@/utils/config";
-import { CREDENTIAL_PASS_KEY, TOKEN7579_ADDRESS } from "@/utils/constants";
-import { p256 } from "@noble/curves/p256";
+import { TOKEN7579_ADDRESS } from "@/utils/constants";
 import {
+  encodeSmartSessionSignature,
+  encodeValidationData,
   encodeValidatorNonce,
   getAccount,
+  getAddOwnableValidatorOwnerAction,
+  getEnableSessionDetails,
   getOwnableValidator,
-  getWebAuthnValidator,
-  getWebauthnValidatorMockSignature,
-  getWebauthnValidatorSignature,
-  WEBAUTHN_VALIDATOR_ADDRESS,
+  getOwnableValidatorMockSignature,
+  getOwnableValidatorOwners,
+  getOwnableValidatorThreshold,
+  getSmartSessionsValidator,
+  getSudoPolicy,
+  OWNABLE_VALIDATOR_ADDRESS,
+  Session,
+  SMART_SESSIONS_ADDRESS,
 } from "@rhinestone/module-sdk";
 import { ToSafeSmartAccountReturnType } from "permissionless/accounts";
 import { getAccountNonce } from "permissionless/actions";
 import { Erc7579Actions } from "permissionless/actions/erc7579";
 import React, { useCallback, useEffect, useState } from "react";
-import { useLocalStorage } from "usehooks-ts";
 import {
   Address,
-  bytesToBigInt,
   Client,
   createPublicClient,
   encodeAbiParameters,
   encodeFunctionData,
+  encodePacked,
+  getAddress,
   Hex,
-  hexToBytes,
   http,
   HttpTransport,
-  pad,
+  isAddress,
   parseAbi,
   parseAbiParameters,
   parseEther,
+  toBytes,
+  toHex,
   zeroAddress,
 } from "viem";
 import {
   BundlerActions,
-  createWebAuthnCredential,
-  CreateWebAuthnCredentialReturnType,
   entryPoint07Address,
   getUserOperationHash,
-  toWebAuthnAccount,
 } from "viem/account-abstraction";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { useAccount, useWalletClient } from "wagmi";
-import { parsePublicKey, parseSignature, sign } from "webauthn-p256";
-import { b64ToBytes, findQuoteIndices, parseAndNormalizeSig, uint8ArrayToHexString } from "./utils/webauth";
 
-import {
-  create,
-  get,
-  PublicKeyCredentialWithAttestationJSON,
-} from "@github/webauthn-json";
-import crypto from "crypto";
-function clean(str: string) {
-  return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
-
-interface WebAuthnProps {
+interface SmartSessionProps {
   isSafeDeployed: boolean;
   safeAccount: ToSafeSmartAccountReturnType<"0.7">;
   smartAccount: Client<HttpTransport, typeof sepolia> &
@@ -64,16 +57,12 @@ interface WebAuthnProps {
     BundlerActions;
 }
 
-const WebAuthn: React.FC<WebAuthnProps> = ({
+const SmartSession: React.FC<SmartSessionProps> = ({
   safeAccount,
   smartAccount,
   isSafeDeployed,
 }) => {
-  const [passKeyData, setPassKeyData] =
-    useLocalStorage<CreateWebAuthnCredentialReturnType | null>(
-      CREDENTIAL_PASS_KEY,
-      null
-    );
+  const sessionData = getSmartSessionsValidator({});
 
   const publicClient = createPublicClient({
     chain: sepolia,
@@ -81,27 +70,22 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
   });
 
   const { data: walletClient } = useWalletClient();
-  const { address } = useAccount();
 
   const [isInstalled, setIsInstalled] = useState(false);
-  console.log("🚀 ~ isInstalled:", isInstalled);
 
   const [txId, setTxId] = useState<string | null>();
   const [error, setError] = useState<string | null>(null);
-  const [signerAddress, setSignerAddress] = useState<Address>(
-    address || zeroAddress
-  );
 
   const [installLoading, setInstallLoading] = useState(false);
+  const [addOwnerLoading, setAddOwnerLoading] = useState(false);
   const [testTransferLoading, setTestTransferLoading] = useState(false);
 
   const initData = async () => {
     if (!smartAccount || !isSafeDeployed) {
       return;
     }
-
     const isModuleInstalled = await smartAccount.isModuleInstalled({
-      address: WEBAUTHN_VALIDATOR_ADDRESS,
+      address: sessionData.module,
       type: "validator",
       context: "0x",
     });
@@ -113,8 +97,6 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
       if (!smartAccount || !isSafeDeployed || !isInstalled) {
         return;
       }
-
-      // const saltUUID = crypto.createHash("sha256").update("salt").digest("hex");
     } catch (error) {
       console.error("Error fetching data", error);
     }
@@ -133,64 +115,95 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
       if (!smartAccount || !isSafeDeployed || !isInstalled) {
         return;
       }
-      if (!passKeyData) {
-        throw new Error("No pass key data found");
+      setTestTransferLoading(true);
+
+      fetchData();
+      setTestTransferLoading(false);
+    } catch (error: any) {
+      setError(error.message);
+      setTestTransferLoading(false);
+    }
+  };
+
+  const onEnableSmartSession = async () => {
+    try {
+      if (!smartAccount || !isSafeDeployed || !isInstalled) {
+        return;
       }
       setTestTransferLoading(true);
-      const credential = passKeyData;
-      const owner = toWebAuthnAccount({
-        credential,
+      const sessionAddress = "0x1988f07FAA04eAa986584cd1e48b694Fa1b8C323";
+
+      const session: Session = {
+        sessionValidator: OWNABLE_VALIDATOR_ADDRESS,
+        sessionValidatorInitData: encodeValidationData({
+          threshold: 1,
+          owners: [sessionAddress],
+        }),
+        salt: toHex(toBytes("0", { size: 32 })),
+        userOpPolicies: [],
+        erc7739Policies: {
+          allowedERC7739Content: [],
+          erc1271Policies: [],
+        },
+        actions: [
+          {
+            actionTarget:
+              "0xa564cB165815937967a7d018B7F34B907B52fcFd" as Address, // an address as the target of the session execution
+            actionTargetSelector: "0x00000000" as Hex, // function selector to be used in the execution, in this case no function selector is used
+            actionPolicies: [getSudoPolicy()],
+          },
+        ],
+        chainId: BigInt(sepolia.id),
+      };
+
+      const account = getAccount({
+        address: safeAccount.address,
+        type: "safe",
       });
 
-      const { x: pubKeyX, y: pubKeyY } = parsePublicKey(credential.publicKey);
-      console.log("🚀 ~ onTestTransfer ~ pubKeyY:", pubKeyY);
-      console.log("🚀 ~ onTestTransfer ~ pubKeyX:", pubKeyX);
-
-      const installData = getWebAuthnValidator({
-        authenticatorId: credential.id,
-        pubKeyX: pubKeyX as any,
-        pubKeyY: pubKeyY as any,
+      const sessionDetails = await getEnableSessionDetails({
+        sessions: [session],
+        account,
+        clients: [publicClient],
       });
+      console.log("🚀 ~ onEnableSmartSession ~ sessionDetails:", sessionDetails.enableSessionData.enableSession.permissionEnableSig)
+
+      const signatureOfOwner =  await walletClient!.signMessage({
+        account: "0x4429B1e0BE0Af0dFFB3CAb40285CBBb631EE5656",
+        message: { raw: sessionDetails.permissionEnableHash },
+      });
+      console.log("🚀 ~ onEnableSmartSession ~ signatureOfOwner:", signatureOfOwner)
+      sessionDetails.enableSessionData.enableSession.permissionEnableSig = signatureOfOwner
+       
+
+      console.log("🚀 ~ onEnableSmartSession ~ sessionDetails:", sessionDetails.enableSessionData.enableSession.permissionEnableSig)
+
 
       const nonce = await getAccountNonce(publicClient, {
         address: safeAccount.address,
         entryPointAddress: entryPoint07Address,
         key: encodeValidatorNonce({
-          account: getAccount({
-            address: safeAccount.address,
-            type: "safe",
-          }),
-          validator: installData,
+          account,
+          validator: sessionData,
         }),
       });
+      console.log("🚀 ~ onEnableSmartSession ~ nonce:", nonce);
 
-      const randomAccount1 = privateKeyToAccount(generatePrivateKey());
-      const randomAccount2 = privateKeyToAccount(generatePrivateKey());
+      sessionDetails.signature = getOwnableValidatorMockSignature({
+        threshold: 1,
+      });
 
       const userOperation = await smartAccount.prepareUserOperation({
         account: safeAccount,
-        nonce,
         calls: [
           {
-            to: TOKEN7579_ADDRESS,
+            to: session.actions[0].actionTarget,
             value: BigInt(0),
-            data: encodeFunctionData({
-              abi: parseAbi(["function transfer(address, uint256)"]),
-              functionName: "transfer",
-              args: [randomAccount1.address, parseEther("0.01")],
-            }),
-          },
-          {
-            to: TOKEN7579_ADDRESS,
-            value: BigInt(0),
-            data: encodeFunctionData({
-              abi: parseAbi(["function transfer(address, uint256)"]),
-              functionName: "transfer",
-              args: [randomAccount2.address, parseEther("0.02")],
-            }),
+            data: session.actions[0].actionTargetSelector,
           },
         ],
-        signature: getWebauthnValidatorMockSignature(),
+        nonce,
+        signature: encodeSmartSessionSignature(sessionDetails),
       });
 
       const userOpHashToSign = getUserOperationHash({
@@ -199,58 +212,15 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
         entryPointVersion: "0.7",
         userOperation,
       });
+      console.log(
+        "🚀 ~ onEnableSmartSession ~ userOpHashToSign:",
+        userOpHashToSign
+      );
 
-      console.log("🚀 ~ onTestTransfer ~ userOpHashToSign:", userOpHashToSign);
-
-      const signData = await owner.signMessage({
-        message: Buffer.from(userOpHashToSign, "hex").toString("base64"),
+      sessionDetails.signature = await walletClient!.signMessage({
+        account: sessionAddress,
+        message: { raw: userOpHashToSign },
       });
-      const { signature, webauthn } = signData;
-      console.log("🚀 ~ onTestTransfer ~ signature:", signature);
-      console.log("🚀 ~ onTestTransfer ~ webauthn:", webauthn);
-      const { r, s } = parseSignature(signature);
-      console.log("🚀 ~ onTestTransfer ~ s:", s);
-      console.log("🚀 ~ onTestTransfer ~ r:", r);
-
-      const sigOfValidator = getWebauthnValidatorSignature({
-        authenticatorData: webauthn.authenticatorData,
-        clientDataJSON: webauthn.clientDataJSON,
-        responseTypeLocation: BigInt(webauthn.typeIndex),
-        r: r,
-        s: s,
-        usePrecompiled: true,
-      });
-      console.log("🚀 ~ onTestTransfer ~ sigOfValidator:", sigOfValidator);
-      const userOpHash = await smartAccount.sendUserOperation({
-        account: safeAccount,
-        calls: [
-          {
-            to: TOKEN7579_ADDRESS,
-            value: BigInt(0),
-            data: encodeFunctionData({
-              abi: parseAbi(["function transfer(address, uint256)"]),
-              functionName: "transfer",
-              args: [randomAccount1.address, parseEther("0.01")],
-            }),
-          },
-          {
-            to: TOKEN7579_ADDRESS,
-            value: BigInt(0),
-            data: encodeFunctionData({
-              abi: parseAbi(["function transfer(address, uint256)"]),
-              functionName: "transfer",
-              args: [randomAccount2.address, parseEther("0.02")],
-            }),
-          },
-        ],
-        nonce,
-        signature: sigOfValidator,
-      });
-
-      const result = await pimlicoClient.waitForUserOperationReceipt({
-        hash: userOpHash,
-      });
-      setTxId(result.receipt.transactionHash);
       fetchData();
       setTestTransferLoading(false);
     } catch (error: any) {
@@ -262,32 +232,11 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
   const onInstallModule = useCallback(async () => {
     try {
       setInstallLoading(true);
-      let credential = null;
-      if (!passKeyData) {
-        credential = await createWebAuthnCredential({
-          name: "[BIC] Demo 7579",
-          rp: {
-            name: "BIC",
-            id: "localhost",
-          },
-        });
-        setPassKeyData(credential as any);
-      } else {
-        credential = passKeyData;
-      }
-      const { x: pubKeyX, y: pubKeyY } = parsePublicKey(credential.publicKey);
-      console.log("🚀 ~ onTestTransfer ~ pubKeyX:", pubKeyX, Number(pubKeyX));
-      console.log("🚀 ~ onTestTransfer ~ pubKeyY:", pubKeyY, Number(pubKeyY));
 
-      const installData = getWebAuthnValidator({
-        authenticatorId: credential.id,
-        pubKeyX: pubKeyX as any,
-        pubKeyY: pubKeyY as any,
-      });
       const opHash = await smartAccount.installModule({
-        type: installData.type,
-        address: installData.module,
-        context: installData.initData!,
+        address: sessionData.address,
+        type: sessionData.type,
+        context: sessionData.initData,
       });
 
       const result = await pimlicoClient.waitForUserOperationReceipt({
@@ -308,7 +257,7 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
       setInstallLoading(true);
       const opHash = await smartAccount.uninstallModule({
         type: "validator",
-        address: WEBAUTHN_VALIDATOR_ADDRESS,
+        address: SMART_SESSIONS_ADDRESS,
         context: encodeAbiParameters(
           parseAbiParameters("address prevEntry, bytes memory deInitData"),
           ["0x0000000000000000000000000000000000000001", "0x"]
@@ -330,7 +279,7 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
 
   return (
     <div className="p-6 bg-gray-100 rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-4">WebAuthn Module</h2>
+      <h2 className="text-2xl font-bold mb-4">SmartSession Module</h2>
       {txId && (
         <div className="bg-green-100 p-4 rounded-lg mb-4">
           <a
@@ -362,7 +311,7 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
               disabled={installLoading}
               className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
             >
-              {installLoading ? "Loading..." : "Install module"}
+              {installLoading ? "Loading..." : "Install Module"}
             </button>
           </div>
         )}
@@ -379,7 +328,15 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
         )}
       </div>
       <div className="mb-6">
-        <h3 className="text-xl font-semibold mb-2">Owners</h3>
+        <div className="mb-4">
+          <button
+            onClick={onEnableSmartSession}
+            disabled={testTransferLoading}
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          >
+            Enable Session
+          </button>
+        </div>
         <div className="mb-4">
           <button
             onClick={onTestTransfer}
@@ -396,4 +353,4 @@ const WebAuthn: React.FC<WebAuthnProps> = ({
   );
 };
 
-export default WebAuthn;
+export default SmartSession;

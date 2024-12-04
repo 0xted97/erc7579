@@ -9,7 +9,7 @@ import { sepolia } from "viem/chains";
 import { createSmartAccountClient } from "permissionless";
 import { Erc7579Actions, erc7579Actions } from "permissionless/actions/erc7579";
 import { BundlerActions, entryPoint07Address } from "viem/account-abstraction";
-import { MOCK_ATTESTER_ADDRESS, RHINESTONE_ATTESTER_ADDRESS } from "@rhinestone/module-sdk";
+import { getOwnableValidator, MOCK_ATTESTER_ADDRESS, RHINESTONE_ATTESTER_ADDRESS } from "@rhinestone/module-sdk";
 
 
 import { MODULES, ModuleType } from "@/utils/modules";
@@ -23,6 +23,7 @@ import WebAuthn from "./modules/WebAuthn";
 import ScheduleTransfer from "./modules/ScheduleTransfer";
 
 import { pimlicoClient } from "@/utils/config";
+import SmartSession from "./modules/SmartSession";
 
 const SafePage: React.FC = () => {
   const DEFAULT_SALE_NONCE = BigInt(7579_3);
@@ -40,7 +41,7 @@ const SafePage: React.FC = () => {
   const [safeAddress, setSafeAddress] = useState<string | null>(null);
   const [safeIsDeployed, setSafeIsDeployed] = useState(false);
   const [selectedModule, setSelectedModule] = useState<ModuleType | null>(
-    ModuleType.Webauthn
+    ModuleType.SmartSession
   );
   const [prepareUserOperationData, setPrepareUserOperationData] = useState();
 
@@ -58,6 +59,10 @@ const SafePage: React.FC = () => {
   const initSafeAccount = async () => {
     const DEFAULT_SAFE_OWNER = "0x4429B1e0BE0Af0dFFB3CAb40285CBBb631EE5656";
     if (walletClient) {
+      const ownableValidator = getOwnableValidator({
+        owners: [DEFAULT_SAFE_OWNER],
+        threshold: 1,
+      })
       const safeAccount = await toSafeSmartAccount({
         client: walletClient,
         // @ts-expect-error The wallet client is set in the useEffect
@@ -77,6 +82,13 @@ const SafePage: React.FC = () => {
           MOCK_ATTESTER_ADDRESS, // Mock Attester - do not use in production
         ],
         attestersThreshold: 1,
+
+        validators: [
+          {
+            address: ownableValidator.address,
+            context: ownableValidator.initData,
+          },
+        ]
       });
       const isSafeDeployed = await safeAccount.isDeployed();
       setSafeIsDeployed(isSafeDeployed);
@@ -111,6 +123,16 @@ const SafePage: React.FC = () => {
     if (selectedModule === ModuleType.Webauthn) {
       return (
         <WebAuthn
+          key={selectedModule}
+          isSafeDeployed={safeIsDeployed}
+          safeAccount={safeAccount!}
+          smartAccount={smartAccountClient!}
+        />
+      );
+    }
+    if (selectedModule === ModuleType.SmartSession) {
+      return (
+        <SmartSession
           key={selectedModule}
           isSafeDeployed={safeIsDeployed}
           safeAccount={safeAccount!}

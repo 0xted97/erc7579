@@ -61,7 +61,7 @@ export function parseAndNormalizeSig(derSig: Hex): { r: bigint; s: bigint } {
   const n = BigInt(
     "0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551"
   );
-  if (s > n / 2n) {
+  if (s > n / BigInt(2)) {
     s = n - s;
   }
   return { r, s };
