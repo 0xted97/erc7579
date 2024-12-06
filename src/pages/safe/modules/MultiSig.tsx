@@ -223,7 +223,6 @@ const MultiSig: React.FC<MultiSigProps> = ({
       });
       const randomAccount1 = privateKeyToAccount(generatePrivateKey());
       const randomAccount2 = privateKeyToAccount(generatePrivateKey());
-
       const userOperation = await smartAccount.prepareUserOperation({
         account: safeAccount,
         nonce,
