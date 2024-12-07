@@ -71,17 +71,19 @@ const SafePage: React.FC = () => {
         BundlerActions)
     | null
   >(null);
+  const [passkeyValidator, setPasskeyValidator] = useState<any>();
 
   const sudoSigner = privateKeyToAccount(
-    "0xcc0502397649f81dcbed56cb8ec6b022492fce2de97e9e6bb32944c58c0d1a0c"
+    "0x5cccb8b636856d7cd07f1a49eed61a196b8c1acb90b5cda0ad921a33d233117b"
   );
   const sessionSigner = privateKeyToAccount(
-    "0xb404432b675c8971ea819c5014dff012289aacabad4a331d58dbda46ed84e3f3"
+    "0x9d04ecbc34484b99d1264bcca58609f12cd4eff2c53029491b8f9ea09a628d1c"
   );
 
   const WHITELIST_ADDRESSES: Address[] = [
     "0x4429B1e0BE0Af0dFFB3CAb40285CBBb631EE5656",
   ];
+  const LIMIT_AMOUNT_PER_TRANSFER = "10";
 
   const OTHER_ADDRESSES: Address[] = [
     "0x43370108f30Ee5Ed54A9565F37af3BE8502903f5",
@@ -94,6 +96,9 @@ const SafePage: React.FC = () => {
   const [txId, setTxId] = useState("");
   const [grantSessionLoading, setGrantSessionLoading] = useState(false);
   const [transferLoading, setTransferLoading] = useState(false);
+  const [grantSudoPassKeyLoading, setGrantSudoPassKeyLoading] = useState(false);
+  const [transferWithPassKeyLoading, setTransferWithPassKeyLoading] =
+    useState(false);
   const [toAddress, setToAddress] = useState<Address>();
 
   const entryPoint = getEntryPoint("0.7");
@@ -156,14 +161,14 @@ const SafePage: React.FC = () => {
             },
             {
               condition: ParamCondition.LESS_THAN_OR_EQUAL,
-              value: parseEther("10"),
+              value: parseEther(LIMIT_AMOUNT_PER_TRANSFER),
             },
           ],
         },
       ],
     });
     const spendingLimitHook = await toSpendingLimitHook({
-      limits: [{ token: TOKEN7579_ADDRESS, allowance: BigInt(1) }],
+      limits: [{ token: TOKEN7579_ADDRESS, allowance: parseEther("25") }],
     });
     return { transferPolicies, spendingLimitHook };
   };
@@ -206,10 +211,6 @@ const SafePage: React.FC = () => {
 
   const initPassKey = async () => {
     try {
-      if (!walletClient) {
-        console.log("walletClient is not initialized");
-        return;
-      }
       const mode = WebAuthnMode.Login; // can also be "login" if you are using an existing key
 
       const webAuthnKey = await toWebAuthnKey({
@@ -224,15 +225,145 @@ const SafePage: React.FC = () => {
         webAuthnSignerVersion: WebAuthnSignerVersion.V0_0_2,
       });
 
-      const passkeyValidator = await toPasskeyValidator(publicClient, {
-        webAuthnKey,
+      const sudoPolicy = toSudoPolicy({});
+
+      const passKeySudoValidator = await toPermissionValidator(publicClient, {
+        entryPoint,
         kernelVersion: KERNEL_V3_1,
-        validatorContractVersion: PasskeyValidatorContractVersion.V0_0_2,
-        entryPoint: entryPoint,
+        signer: webAuthnSigner,
+        policies: [sudoPolicy],
+      });
+      setPasskeyValidator(passKeySudoValidator);
+    } catch (error) {
+      console.error("🚀 ~ initPassKey ~ error", error);
+    }
+  };
+  const grantPassKeyAsSudo = async () => {
+    try {
+      if (!walletClient || !kernelAccount) {
+        console.log("walletClient & kernelAccount is not initialized");
+        return;
+      }
+      if(!passkeyValidator) { 
+        console.log("passkeyValidator is not initialized");
+        return;
+      }
+      const { spendingLimitHook } = await getPoliciesAndHooks();
+
+      setGrantSudoPassKeyLoading(true);
+      const { sudoValidator } = await getECDSASigners();
+
+      const account = await createKernelAccount(publicClient, {
+        entryPoint,
+        address: kernelAccount.address,
+        kernelVersion: KERNEL_V3_1,
+        plugins: {
+          sudo: sudoValidator,
+          regular: passkeyValidator,
+          // hook: spendingLimitHook,
+        },
       });
 
-      console.log("🚀 ~ initPassKey ~ webAuthnKey:", webAuthnKey);
+      const kernelClient = createKernelAccountClient({
+        account: account,
+        chain: sepolia,
+        bundlerTransport: http(BUNDLER_URL),
+        paymaster: pimlicoClient,
+        userOperation: {
+          estimateFeesPerGas: async () => {
+            return (await pimlicoClient.getUserOperationGasPrice()).fast;
+          },
+        },
+      }).extend(erc7579Actions());
+
+      const transferOpHash = await kernelClient.sendUserOperation({
+        calls: [
+          {
+            to: TOKEN7579_ADDRESS,
+            value: BigInt(0),
+            data: encodeFunctionData({
+              abi: parseAbi(["function transfer(address, uint256)"]),
+              functionName: "transfer",
+              args: [
+                WHITELIST_ADDRESSES[0],
+                parseEther("0.09"),
+              ],
+            }),
+          },
+        ],
+      });
+
+      const receipt = await kernelClient.waitForUserOperationReceipt({
+        hash: transferOpHash,
+      });
+      console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
+      setTxId(receipt.receipt.transactionHash);
+      setGrantSudoPassKeyLoading(false);
     } catch (error) {
+      setGrantSudoPassKeyLoading(false);
+      console.error("🚀 ~ initPassKey ~ error", error);
+    }
+  };
+
+  const onTransferWithPassKey = async () => {
+    try {
+      if (!walletClient || !kernelAccount) {
+        console.log("walletClient & kernelAccount is not initialized");
+        return;
+      }
+      if(!passkeyValidator) { 
+        console.log("passkeyValidator is not initialized");
+        return;
+      }
+      setTransferWithPassKeyLoading(true);
+     
+
+      const account = await createKernelAccount(publicClient, {
+        entryPoint,
+        address: kernelAccount.address,
+        kernelVersion: KERNEL_V3_1,
+        plugins: {
+          regular: passkeyValidator,
+        },
+      });
+
+      const kernelClient = createKernelAccountClient({
+        account: account,
+        chain: sepolia,
+        bundlerTransport: http(BUNDLER_URL),
+        paymaster: pimlicoClient,
+        userOperation: {
+          estimateFeesPerGas: async () => {
+            return (await pimlicoClient.getUserOperationGasPrice()).fast;
+          },
+        },
+      }).extend(erc7579Actions());
+
+      const transferOpHash = await kernelClient.sendUserOperation({
+        calls: [
+          {
+            to: TOKEN7579_ADDRESS,
+            value: BigInt(0),
+            data: encodeFunctionData({
+              abi: parseAbi(["function transfer(address, uint256)"]),
+              functionName: "transfer",
+              args: [
+                "0x4337012eaf1f862B8dBDC6b62a01782AE01Ef038",
+                parseEther("1.01"),
+              ],
+            }),
+          },
+        ],
+      });
+
+      const receipt = await kernelClient.waitForUserOperationReceipt({
+        hash: transferOpHash,
+      });
+      console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
+      setTxId(receipt.receipt.transactionHash);
+      setTransferWithPassKeyLoading(false);
+    } catch (error) {
+      setTransferWithPassKeyLoading(false);
       console.error("🚀 ~ initPassKey ~ error", error);
     }
   };
@@ -246,7 +377,8 @@ const SafePage: React.FC = () => {
       setGrantSessionLoading(true);
       const { sudoValidator, ecdsaSessionSigner } = await getECDSASigners();
 
-      const { transferPolicies, spendingLimitHook } = await getPoliciesAndHooks();
+      const { transferPolicies, spendingLimitHook } =
+        await getPoliciesAndHooks();
 
       const sessionPermission = await toPermissionValidator(publicClient, {
         entryPoint,
@@ -278,36 +410,27 @@ const SafePage: React.FC = () => {
         },
       }).extend(erc7579Actions());
 
-      const mintTransactionHash = await kernelClient.sendTransaction({
-        to: TOKEN7579_ADDRESS,
-        data: encodeFunctionData({
-          abi: parseAbi(["function transfer(address, uint256)"]),
-          functionName: "transfer",
-          args: [WHITELIST_ADDRESSES[0], parseEther("0.05")],
-        }),
+
+      // mint user op
+      const transferOpHash = await kernelClient.sendUserOperation({
+        calls: [
+          {
+            to: TOKEN7579_ADDRESS,
+            value: BigInt(0),
+            data: encodeFunctionData({
+              abi: parseAbi(["function transfer(address, uint256)"]),
+              functionName: "transfer",
+              args: [WHITELIST_ADDRESSES[0], parseEther("1")],
+            }),
+          }
+        ],
       });
-      console.log("🚀 ~ onGrantSessionKey ~ mintTransactionHash:", mintTransactionHash)
 
-      // // mint user op
-      // const transferOpHash = await kernelClient.sendUserOperation({
-      //   calls: [
-      //     {
-      //       to: TOKEN7579_ADDRESS,
-      //       value: BigInt(0),
-      //       data: encodeFunctionData({
-      //         abi: parseAbi(["function transfer(address, uint256)"]),
-      //         functionName: "transfer",
-      //         args: [WHITELIST_ADDRESSES[0], parseEther("0.05")],
-      //       }),
-      //     }
-      //   ],
-      // });
-
-      // const receipt = await kernelClient.waitForUserOperationReceipt({
-      //   hash: transferOpHash,
-      // });
-      // console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
-      // setTxId(receipt.receipt.transactionHash);
+      const receipt = await kernelClient.waitForUserOperationReceipt({
+        hash: transferOpHash,
+      });
+      console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
+      setTxId(receipt.receipt.transactionHash);
       setGrantSessionLoading(false);
     } catch (error) {
       console.error("🚀 ~ initPassKey ~ error", error);
@@ -315,7 +438,7 @@ const SafePage: React.FC = () => {
     }
   };
 
-  const onTransferWithSessionKey = async () => {
+  const onTransferWithSessionKey = async (amount: number) => {
     try {
       if (!walletClient || !smartAccountClient || !kernelAccount) {
         console.log("Not initialized");
@@ -368,18 +491,9 @@ const SafePage: React.FC = () => {
             data: encodeFunctionData({
               abi: parseAbi(["function transfer(address, uint256)"]),
               functionName: "transfer",
-              args: [toAddress as Address, parseEther("9")],
+              args: [toAddress as Address, parseEther(amount.toString())],
             }),
-          },
-          {
-            to: TOKEN7579_ADDRESS,
-            value: BigInt(0),
-            data: encodeFunctionData({
-              abi: parseAbi(["function transfer(address, uint256)"]),
-              functionName: "transfer",
-              args: [toAddress as Address, parseEther("2")],
-            }),
-          },
+          }
         ],
       });
 
@@ -469,17 +583,11 @@ const SafePage: React.FC = () => {
           Safe Address: {kernelAddress}
         </h2>
         {renderSigners()}
-        <button
-          onClick={initPassKey}
-          disabled={false}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600"
-        >
-          {"Init passkey"}
-        </button>
+
         <button
           onClick={initZeroAccount}
           disabled={false}
-          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 ml-4"
+          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 mr-4"
         >
           {"Init Zero Account"}
         </button>
@@ -498,15 +606,47 @@ const SafePage: React.FC = () => {
         </div>
       )}
       <div className="bg-white shadow-md rounded-lg p-6 mb-6 m-4">
+        <h2 className="text-xl font-bold mb-4">Test Passkey sudo</h2>
+
+        <button
+          onClick={initPassKey}
+          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600 mr-4"
+        >
+          {"Generate Passkey"}
+        </button>
+
+        <button
+          onClick={grantPassKeyAsSudo}
+          disabled={grantSudoPassKeyLoading}
+          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600 mr-4"
+        >
+          {grantSudoPassKeyLoading ? "Initializing..." : "Init passkey as sudo"}
+        </button>
+
+        <button
+          onClick={onTransferWithPassKey}
+          disabled={transferWithPassKeyLoading}
+          className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 mr-4"
+        >
+          {transferWithPassKeyLoading ? "Loading" : "Transfer with passkey"}
+        </button>
+      </div>
+      <div className="bg-white shadow-md rounded-lg p-6 mb-6 m-4">
         <h2 className="text-xl font-bold mb-4">Session Key</h2>
         <div className="mb-4">
-            <button
+          <h3 className="text-lg font-bold mb-2">Policy</h3>
+          <p>Only transfer to {WHITELIST_ADDRESSES.join(',')} addresses and less than {LIMIT_AMOUNT_PER_TRANSFER} tokens.</p>
+        </div>
+        <div className="mb-4">
+          <button
             onClick={onGrantSessionKey}
             disabled={!kernelAccount || grantSessionLoading}
             className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600"
-            >
-            {grantSessionLoading ? "Granting Session Key..." : "Grant Session Key"}
-            </button>
+          >
+            {grantSessionLoading
+              ? "Granting Session Key..."
+              : "Grant Session Key"}
+          </button>
         </div>
         <div>
           <div className="mb-4">
@@ -516,19 +656,28 @@ const SafePage: React.FC = () => {
               value={toAddress}
             >
               <option value="">Select address to transfer</option>
-              {WHITELIST_ADDRESSES.concat(OTHER_ADDRESSES).map((address, index) => (
-                <option key={index} value={address}>
-                  {address}
-                </option>
-              ))}
+              {WHITELIST_ADDRESSES.concat(OTHER_ADDRESSES).map(
+                (address, index) => (
+                  <option key={index} value={address}>
+                    {address}
+                  </option>
+                )
+              )}
             </select>
           </div>
           <button
-            onClick={onTransferWithSessionKey}
+            onClick={()=>onTransferWithSessionKey(0.05)}
+            disabled={!kernelAccount || transferLoading}
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600 mr-4"
+          >
+            {transferLoading ? "Transferring..." : "Transfer 0.05 Token"}
+          </button>
+          <button
+            onClick={()=>onTransferWithSessionKey(20)}
             disabled={!kernelAccount || transferLoading}
             className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600"
           >
-            {transferLoading ? "Transferring..." : "Transfer with session"}
+            {transferLoading ? "Transferring..." : "Transfer 20 Token"}
           </button>
         </div>
       </div>
