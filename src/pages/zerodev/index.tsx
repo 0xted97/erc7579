@@ -74,16 +74,16 @@ const SafePage: React.FC = () => {
   const [passkeyValidator, setPasskeyValidator] = useState<any>();
 
   const sudoSigner = privateKeyToAccount(
-    "0x5cccb8b636856d7cd07f1a49eed61a196b8c1acb90b5cda0ad921a33d233117b"
+    "0x7355ae6b3362c11b0e6698e37f2b9324597812fc29eae37d92f6f7239723c036"
   );
   const sessionSigner = privateKeyToAccount(
-    "0x9d04ecbc34484b99d1264bcca58609f12cd4eff2c53029491b8f9ea09a628d1c"
+    "0x964ed93a9f83cb0ea461db336b9fd46683505d23b59d6f5ad99b43e06dd29190"
   );
 
   const WHITELIST_ADDRESSES: Address[] = [
     "0x4429B1e0BE0Af0dFFB3CAb40285CBBb631EE5656",
   ];
-  const LIMIT_AMOUNT_PER_TRANSFER = "10";
+  const LIMIT_AMOUNT_PER_TRANSFER = "20";
 
   const OTHER_ADDRESSES: Address[] = [
     "0x43370108f30Ee5Ed54A9565F37af3BE8502903f5",
@@ -94,6 +94,7 @@ const SafePage: React.FC = () => {
   const [kernelAddress, setKernelAddress] = useState<string | null>(null);
   const [isDeployed, setIsDeployed] = useState(false);
   const [txId, setTxId] = useState("");
+  const [errorMessage, setErrorMessage] = useState();
   const [grantSessionLoading, setGrantSessionLoading] = useState(false);
   const [transferLoading, setTransferLoading] = useState(false);
   const [grantSudoPassKeyLoading, setGrantSudoPassKeyLoading] = useState(false);
@@ -299,7 +300,8 @@ const SafePage: React.FC = () => {
       console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
       setTxId(receipt.receipt.transactionHash);
       setGrantSudoPassKeyLoading(false);
-    } catch (error) {
+    } catch (error: any) {
+      setErrorMessage(error.message);
       setGrantSudoPassKeyLoading(false);
       console.error("🚀 ~ initPassKey ~ error", error);
     }
@@ -362,8 +364,9 @@ const SafePage: React.FC = () => {
       console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
       setTxId(receipt.receipt.transactionHash);
       setTransferWithPassKeyLoading(false);
-    } catch (error) {
+    } catch (error: any) {
       setTransferWithPassKeyLoading(false);
+      setErrorMessage(error.message);
       console.error("🚀 ~ initPassKey ~ error", error);
     }
   };
@@ -432,9 +435,69 @@ const SafePage: React.FC = () => {
       console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
       setTxId(receipt.receipt.transactionHash);
       setGrantSessionLoading(false);
-    } catch (error) {
+    } catch (error:any) {
       console.error("🚀 ~ initPassKey ~ error", error);
       setGrantSessionLoading(false);
+      setErrorMessage(error.message);
+    }
+  };
+
+
+  const onRevokeSessionKey = async () => {
+    try {
+      if (!walletClient || !smartAccountClient || !kernelAccount) {
+        console.log("Not initialized");
+        return;
+      }
+      setGrantSessionLoading(true);
+      const { sudoValidator, ecdsaSessionSigner } = await getECDSASigners();
+      
+      const sessionPermission = await toPermissionValidator(publicClient, {
+        entryPoint,
+        kernelVersion: KERNEL_V3_1,
+        signer: ecdsaSessionSigner,
+        policies: [],
+      });
+
+      const account = await createKernelAccount(publicClient, {
+        entryPoint,
+        address: kernelAccount.address,
+        kernelVersion: KERNEL_V3_1,
+        plugins: {
+          sudo: sudoValidator,
+          regular: sessionPermission,
+          // hook: spendingLimitHook,
+        },
+      });
+
+      const kernelClient = createKernelAccountClient({
+        account: account,
+        chain: sepolia,
+        bundlerTransport: http(BUNDLER_URL),
+        paymaster: pimlicoClient,
+        userOperation: {
+          estimateFeesPerGas: async () => {
+            return (await pimlicoClient.getUserOperationGasPrice()).fast;
+          },
+        },
+      }).extend(erc7579Actions());
+
+
+      // mint user op
+      const transferOpHash = await kernelClient.sendTransaction({
+        callData:"0x0",
+      });
+
+      const receipt = await kernelClient.waitForUserOperationReceipt({
+        hash: transferOpHash,
+      });
+      console.log("🚀 ~ onGrantSessionKey ~ receipt:", receipt);
+      setTxId(receipt.receipt.transactionHash);
+      setGrantSessionLoading(false);
+    } catch (error: any) {
+      console.error("🚀 ~ initPassKey ~ error", error);
+      setGrantSessionLoading(false);
+      setErrorMessage(error.message);
     }
   };
 
@@ -503,45 +566,13 @@ const SafePage: React.FC = () => {
       console.log("🚀 ~ onTransferWithSessionKey ~ receipt:", receipt);
       setTransferLoading(false);
       setTxId(receipt.receipt.transactionHash);
-    } catch (error) {
+    } catch (error: any) {
       console.log("🚀 ~ onTransferWithSessionKey ~ error:", error);
       setTransferLoading(false);
+      setErrorMessage(error.message);
     }
   };
 
-  const onTestTransfer = async () => {
-    try {
-      if (!walletClient || !smartAccountClient || !kernelAccount) {
-        console.log("Not initialized");
-        return;
-      }
-
-      const transferUserOpHash = await smartAccountClient.sendUserOperation({
-        callData: await kernelAccount.encodeCalls([
-          {
-            to: TOKEN7579_ADDRESS,
-            value: BigInt(0),
-            data: encodeFunctionData({
-              abi: parseAbi(["function transfer(address, uint256)"]),
-              functionName: "transfer",
-              args: [
-                "0x4429B1e0BE0Af0dFFB3CAb40285CBBb631EE5656",
-                parseEther("0.01"),
-              ],
-            }),
-          },
-        ]),
-      });
-
-      const receipt = await smartAccountClient.waitForUserOperationReceipt({
-        hash: transferUserOpHash,
-      });
-      console.log("🚀 ~ onTestTransfer ~ receipt:", receipt);
-      setTxId(receipt.receipt.transactionHash);
-    } catch (error) {
-      console.error("🚀 ~ initPassKey ~ error", error);
-    }
-  };
 
   const renderSigners = () => {
     return (
@@ -580,7 +611,7 @@ const SafePage: React.FC = () => {
       <div className="bg-white shadow-md rounded-lg p-6 mb-6 m-4">
         <ConnectButton />
         <h2 className="text-xl font-bold mb-4">
-          Safe Address: {kernelAddress}
+          Kernel Address: {kernelAddress}
         </h2>
         {renderSigners()}
 
@@ -603,6 +634,12 @@ const SafePage: React.FC = () => {
           >
             {`https://sepolia.etherscan.io/tx/${txId}`}
           </a>
+        </div>
+      )}
+      {errorMessage && (
+        <div className="bg-white shadow-md rounded-lg p-6 mb-6 m-4">
+          <h2 className="text-xl font-bold mb-4">Error</h2>
+          <p>{errorMessage}</p>
         </div>
       )}
       <div className="bg-white shadow-md rounded-lg p-6 mb-6 m-4">
@@ -641,12 +678,22 @@ const SafePage: React.FC = () => {
           <button
             onClick={onGrantSessionKey}
             disabled={!kernelAccount || grantSessionLoading}
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600"
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-green-600 mr-4"
           >
             {grantSessionLoading
               ? "Granting Session Key..."
               : "Grant Session Key"}
           </button>
+
+          {/* <button
+            onClick={onRevokeSessionKey}
+            disabled={!kernelAccount || grantSessionLoading}
+            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+          >
+            {grantSessionLoading
+              ? "Revoking Session Key..."
+              : "Revoke Session Key"}
+          </button> */}
         </div>
         <div>
           <div className="mb-4">
